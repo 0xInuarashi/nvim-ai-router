@@ -57,23 +57,6 @@ local function append_chat(buf, lines)
   end
 end
 
-local function open_answer_window(lines)
-  local buf = vim.api.nvim_create_buf(false, true)
-  vim.api.nvim_buf_set_name(buf, "AI Answer")
-  vim.bo[buf].buftype = "nofile"
-  vim.bo[buf].bufhidden = "wipe"
-  vim.bo[buf].swapfile = false
-  vim.bo[buf].filetype = "ai_openrouter"
-  vim.bo[buf].modifiable = true
-  vim.bo[buf].undolevels = -1
-
-  vim.cmd("botright split")
-  vim.api.nvim_win_set_buf(0, buf)
-  vim.api.nvim_win_set_option(0, "wrap", true)
-
-  vim.api.nvim_buf_set_lines(buf, 0, -1, false, normalize_lines(lines))
-  vim.api.nvim_win_set_cursor(0, { 1, 0 })
-end
 
 local function parse_response(stdout)
   local ok, decoded = pcall(vim.fn.json_decode, stdout)
@@ -241,7 +224,6 @@ function M.ask(message)
     end
 
     vim.notify("A: " .. content)
-    open_answer_window({ "AI:", "", content })
   end)
 end
 
