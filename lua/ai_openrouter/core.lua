@@ -18,6 +18,26 @@ local function get_api_key()
   return nil
 end
 
+local function sanitize_message(text)
+  if not text then
+    return ""
+  end
+  return tostring(text):gsub("[%z\1-\31\127]", "")
+end
+
+local function validate_base_url(url)
+  if type(url) ~= "string" or url == "" then
+    return nil, "invalid base_url"
+  end
+  if url:sub(1, 1) == "-" then
+    return nil, "base_url must not start with '-'"
+  end
+  if not url:match("^https://") then
+    return nil, "base_url must start with https://"
+  end
+  return url, nil
+end
+
 local function normalize_lines(lines)
   local out = {}
   for _, line in ipairs(lines) do
@@ -72,6 +92,19 @@ local function parse_response(stdout)
   return choice.message.content, nil
 end
 
+local function build_curl_config(url, api_key, payload)
+  local lines = {
+    "url = " .. url,
+    "request = POST",
+    "header = \"Authorization: Bearer " .. api_key .. "\"",
+    "header = \"Content-Type: application/json\"",
+    "data = " .. vim.fn.json_encode(payload),
+    "silent",
+    "show-error",
+  }
+  return table.concat(lines, "\n") .. "\n"
+end
+
 local function request(messages, cb)
   local api_key = get_api_key()
   if not api_key then
@@ -81,27 +114,29 @@ local function request(messages, cb)
     return
   end
 
-  local payload = vim.fn.json_encode({
+  local url, url_err = validate_base_url(M.config.base_url)
+  if not url then
+    vim.schedule(function()
+      cb(nil, url_err)
+    end)
+    return
+  end
+
+  local payload = {
     model = M.config.model,
     messages = messages,
-  })
+  }
+
+  local config_text = build_curl_config(url, api_key, payload)
 
   local cmd = {
     "curl",
-    "-sS",
-    "-X",
-    "POST",
-    M.config.base_url,
-    "-H",
-    "Authorization: Bearer " .. api_key,
-    "-H",
-    "Content-Type: application/json",
-    "-d",
-    payload,
+    "--config",
+    "-",
   }
 
   if vim.system then
-    vim.system(cmd, { text = true }, function(res)
+    vim.system(cmd, { text = true, stdin = config_text }, function(res)
       vim.schedule(function()
         if res.code ~= 0 then
           cb(nil, res.stderr ~= "" and res.stderr or "request failed")
@@ -118,9 +153,10 @@ local function request(messages, cb)
   local stdout = {}
   local stderr = {}
 
-  vim.fn.jobstart(cmd, {
+  local job_id = vim.fn.jobstart(cmd, {
     stdout_buffered = true,
     stderr_buffered = true,
+    stdin = "pipe",
     on_stdout = function(_, data)
       if data then
         table.insert(stdout, table.concat(data, "\n"))
@@ -143,6 +179,10 @@ local function request(messages, cb)
       end)
     end,
   })
+  if job_id > 0 then
+    vim.fn.chansend(job_id, config_text)
+    vim.fn.chanclose(job_id, "stdin")
+  end
 end
 
 local function on_input(buf, input)
@@ -210,7 +250,7 @@ function M.ask(message)
     return
   end
 
-  vim.notify("Q: " .. message)
+  vim.notify("Q: " .. sanitize_message(message))
 
   local messages = {}
   if M.config.system_prompt and M.config.system_prompt ~= "" then
@@ -223,7 +263,7 @@ function M.ask(message)
       return
     end
 
-    vim.notify("A: " .. content)
+    vim.notify("A: " .. sanitize_message(content))
   end)
 end
 

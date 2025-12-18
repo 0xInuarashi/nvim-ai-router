@@ -1,11 +1,11 @@
-# nvim-ai-openrouter
+# openrouter.nvim
 
 Minimal OpenRouter chat for Neovim.
 
 ## Install (Neovim 0.10+)
 
 ```lua
-vim.pack.add({ { src = "/home/dev/git/0xinuarashi/nvim-ai-router" } })
+vim.pack.add({ { src = "https://github.com/0xinuarashi/openrouter.nvim" } })
 ```
 
 ## Setup
@@ -28,7 +28,7 @@ Run:
 :AI <message>
 ```
 
-The response opens in a split buffer.
+The response is printed via `:messages`.
 
 ## Options
 
