@@ -4,9 +4,8 @@ M.config = {
   api_key = nil,
   model = "openai/gpt-3.5-turbo",
   base_url = "https://openrouter.ai/api/v1/chat/completions",
+  system_prompt = nil,
 }
-
-M.state = {}
 
 local function get_api_key()
   if M.config.api_key and M.config.api_key ~= "" then
@@ -17,13 +16,6 @@ local function get_api_key()
     return env_key
   end
   return nil
-end
-
-local function ensure_state(buf)
-  if not M.state[buf] then
-    M.state[buf] = { messages = {} }
-  end
-  return M.state[buf]
 end
 
 local function normalize_lines(lines)
@@ -63,6 +55,24 @@ local function append_chat(buf, lines)
   if win ~= -1 then
     vim.api.nvim_win_set_cursor(win, { vim.api.nvim_buf_line_count(buf), 0 })
   end
+end
+
+local function open_answer_window(lines)
+  local buf = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_buf_set_name(buf, "AI Answer")
+  vim.bo[buf].buftype = "nofile"
+  vim.bo[buf].bufhidden = "wipe"
+  vim.bo[buf].swapfile = false
+  vim.bo[buf].filetype = "ai_openrouter"
+  vim.bo[buf].modifiable = true
+  vim.bo[buf].undolevels = -1
+
+  vim.cmd("botright split")
+  vim.api.nvim_win_set_buf(0, buf)
+  vim.api.nvim_win_set_option(0, "wrap", true)
+
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, normalize_lines(lines))
+  vim.api.nvim_win_set_cursor(0, { 1, 0 })
 end
 
 local function parse_response(stdout)
@@ -157,11 +167,10 @@ local function on_input(buf, input)
     return
   end
 
-  local state = ensure_state(buf)
-  table.insert(state.messages, { role = "user", content = input })
+  local messages = { { role = "user", content = input } }
   append_chat(buf, { "You: " .. input, "" })
 
-  request(state.messages, function(content, err)
+  request(messages, function(content, err)
     if not vim.api.nvim_buf_is_valid(buf) then
       return
     end
@@ -171,7 +180,6 @@ local function on_input(buf, input)
       return
     end
 
-    table.insert(state.messages, { role = "assistant", content = content })
     append_chat(buf, { "AI: " .. content, "" })
   end)
 end
@@ -208,15 +216,33 @@ function M.open_chat()
     on_input(buf, input)
   end)
 
-  vim.api.nvim_create_autocmd("BufWipeout", {
-    buffer = buf,
-    callback = function()
-      M.state[buf] = nil
-    end,
-  })
-
   vim.api.nvim_win_set_cursor(0, { vim.api.nvim_buf_line_count(buf), 0 })
   vim.cmd("startinsert")
+end
+
+function M.ask(message)
+  local api_key = get_api_key()
+  if not api_key then
+    vim.notify("OpenRouter API key not set", vim.log.levels.ERROR)
+    return
+  end
+
+  vim.notify("Q: " .. message)
+
+  local messages = {}
+  if M.config.system_prompt and M.config.system_prompt ~= "" then
+    table.insert(messages, { role = "system", content = M.config.system_prompt })
+  end
+  table.insert(messages, { role = "user", content = message })
+  request(messages, function(content, err)
+    if err then
+      vim.notify(err, vim.log.levels.ERROR)
+      return
+    end
+
+    vim.notify("A: " .. content)
+    open_answer_window({ "AI:", "", content })
+  end)
 end
 
 function M.setup(opts)
