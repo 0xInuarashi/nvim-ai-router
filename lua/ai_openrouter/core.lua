@@ -57,6 +57,30 @@ local function append_chat(buf, lines)
   end
 end
 
+local function start_spinner(label)
+  local frames = { "|", "/", "-", "\\" }
+  local idx = 1
+  local timer = vim.loop.new_timer()
+
+  local function render()
+    local text = frames[idx] .. " " .. label
+    vim.api.nvim_echo({ { text, "Comment" } }, false, {})
+    idx = (idx % #frames) + 1
+  end
+
+  render()
+  timer:start(120, 120, vim.schedule_wrap(render))
+  return timer
+end
+
+local function stop_spinner(timer)
+  if timer then
+    timer:stop()
+    timer:close()
+  end
+  vim.api.nvim_echo({ { "" } }, false, {})
+end
+
 
 local function parse_response(stdout)
   local ok, decoded = pcall(vim.fn.json_decode, stdout)
@@ -211,6 +235,7 @@ function M.ask(message)
   end
 
   vim.notify("Q: " .. message)
+  local spinner = start_spinner("Waiting for response...")
 
   local messages = {}
   if M.config.system_prompt and M.config.system_prompt ~= "" then
@@ -218,6 +243,7 @@ function M.ask(message)
   end
   table.insert(messages, { role = "user", content = message })
   request(messages, function(content, err)
+    stop_spinner(spinner)
     if err then
       vim.notify(err, vim.log.levels.ERROR)
       return
