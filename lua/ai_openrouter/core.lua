@@ -82,7 +82,9 @@ end
 local function request(messages, cb)
   local api_key = get_api_key()
   if not api_key then
-    cb(nil, "missing OpenRouter API key")
+    vim.schedule(function()
+      cb(nil, "missing OpenRouter API key")
+    end)
     return
   end
 
@@ -107,13 +109,15 @@ local function request(messages, cb)
 
   if vim.system then
     vim.system(cmd, { text = true }, function(res)
-      if res.code ~= 0 then
-        cb(nil, res.stderr ~= "" and res.stderr or "request failed")
-        return
-      end
+      vim.schedule(function()
+        if res.code ~= 0 then
+          cb(nil, res.stderr ~= "" and res.stderr or "request failed")
+          return
+        end
 
-      local content, err = parse_response(res.stdout)
-      cb(content, err)
+        local content, err = parse_response(res.stdout)
+        cb(content, err)
+      end)
     end)
     return
   end
@@ -135,13 +139,15 @@ local function request(messages, cb)
       end
     end,
     on_exit = function(_, code)
-      if code ~= 0 then
-        cb(nil, table.concat(stderr, "\n"))
-        return
-      end
+      vim.schedule(function()
+        if code ~= 0 then
+          cb(nil, table.concat(stderr, "\n"))
+          return
+        end
 
-      local content, err = parse_response(table.concat(stdout, "\n"))
-      cb(content, err)
+        local content, err = parse_response(table.concat(stdout, "\n"))
+        cb(content, err)
+      end)
     end,
   })
 end
