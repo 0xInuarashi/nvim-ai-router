@@ -273,8 +273,6 @@ function M.ask(message)
       end
       return
     end
-
-    vim.notify("A: " .. sanitize_message(content))
   end)
 end
 
