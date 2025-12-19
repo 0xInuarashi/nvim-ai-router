@@ -22,7 +22,7 @@ local function sanitize_message(text)
   if not text then
     return ""
   end
-  return tostring(text):gsub("[%z\1-\31\127]", "")
+  return tostring(text):gsub("[%z\1-\8\11\12\13\14-\31\127]", "")
 end
 
 local function start_spinner(label)
@@ -202,7 +202,7 @@ function M.ask(message)
     return
   end
 
-  vim.notify("Q: " .. sanitize_message(message))
+  local safe_message = sanitize_message(message)
   local spinner = start_spinner("Waiting for response...")
 
   local messages = {}
@@ -212,6 +212,7 @@ function M.ask(message)
   table.insert(messages, { role = "user", content = message })
   request(messages, function(content, err)
     stop_spinner(spinner)
+    vim.notify("Q: " .. safe_message)
     if err then
       vim.notify(sanitize_message(err), vim.log.levels.ERROR)
       return
