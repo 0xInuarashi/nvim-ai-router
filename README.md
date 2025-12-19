@@ -28,7 +28,9 @@ Run:
 :AI <message>
 ```
 
-The response streams into a floating window; press `<CR>` or `q` to close it.
+The response streams into a floating window. When it finishes, keep typing and press `<CR>` to send the next message. Use `q` or `<Esc>` to close the window.
+
+You can also run `:AI` with no arguments to open the chat window first.
 
 ## Options
 

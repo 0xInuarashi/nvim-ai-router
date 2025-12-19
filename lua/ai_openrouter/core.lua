@@ -1,4 +1,5 @@
 local M = {}
+local chat = nil
 
 M.config = {
   api_key = nil,
@@ -53,83 +54,6 @@ local function build_curl_config(url, api_key, extra_headers)
     end
   end
   return lines
-end
-
-local function open_stream_window(question)
-  local buf = vim.api.nvim_create_buf(false, true)
-  vim.bo[buf].buftype = "nofile"
-  vim.bo[buf].bufhidden = "wipe"
-  vim.bo[buf].swapfile = false
-  vim.bo[buf].filetype = "openrouter"
-  vim.bo[buf].modifiable = false
-
-  local width = math.max(50, math.floor(vim.o.columns * 0.7))
-  local height = math.max(12, math.floor(vim.o.lines * 0.6))
-  width = math.min(width, vim.o.columns - 4)
-  height = math.min(height, vim.o.lines - 4)
-
-  local row = math.floor((vim.o.lines - height) / 2 - 1)
-  if row < 0 then
-    row = 0
-  end
-  local col = math.floor((vim.o.columns - width) / 2)
-  if col < 0 then
-    col = 0
-  end
-
-  local win = vim.api.nvim_open_win(buf, true, {
-    relative = "editor",
-    row = row,
-    col = col,
-    width = width,
-    height = height,
-    style = "minimal",
-    border = "rounded",
-  })
-
-  vim.keymap.set("n", "<CR>", function()
-    if vim.api.nvim_win_is_valid(win) then
-      vim.api.nvim_win_close(win, true)
-    end
-  end, { buffer = buf, silent = true, nowait = true })
-
-  vim.keymap.set("n", "q", function()
-    if vim.api.nvim_win_is_valid(win) then
-      vim.api.nvim_win_close(win, true)
-    end
-  end, { buffer = buf, silent = true, nowait = true })
-
-  local function render(answer)
-    local lines = {
-      "Q: " .. sanitize_message(question),
-      "",
-      "A:",
-      "",
-    }
-
-    local parts = vim.split(answer or "", "\n", { plain = true })
-    if answer and answer:sub(-1) == "\n" then
-      table.insert(parts, "")
-    end
-    for _, part in ipairs(parts) do
-      table.insert(lines, part)
-    end
-
-    vim.bo[buf].modifiable = true
-    vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
-    vim.bo[buf].modifiable = false
-
-    if vim.api.nvim_win_is_valid(win) then
-      vim.api.nvim_win_set_cursor(win, { #lines, 0 })
-    end
-  end
-
-  render("")
-  return {
-    buf = buf,
-    win = win,
-    render = render,
-  }
 end
 
 local function request_stream(messages, on_chunk, on_done)
@@ -189,7 +113,9 @@ local function request_stream(messages, on_chunk, on_done)
           if payload_line then
             if payload_line == "[DONE]" then
               done = true
-              on_done(response, nil)
+              vim.schedule(function()
+                on_done(response, nil)
+              end)
               return
             end
             local ok, decoded = pcall(vim.fn.json_decode, payload_line)
@@ -197,7 +123,9 @@ local function request_stream(messages, on_chunk, on_done)
               if decoded.error then
                 local msg = decoded.error.message or decoded.error.type or "request failed"
                 done = true
-                on_done(nil, msg)
+                vim.schedule(function()
+                  on_done(nil, msg)
+                end)
                 return
               end
               local choice = decoded.choices and decoded.choices[1]
@@ -209,7 +137,9 @@ local function request_stream(messages, on_chunk, on_done)
               end
               if delta ~= "" then
                 response = response .. delta
-                on_chunk(delta, response)
+                vim.schedule(function()
+                  on_chunk(delta, response)
+                end)
               end
             end
           end
@@ -244,6 +174,172 @@ local function request_stream(messages, on_chunk, on_done)
   end
 end
 
+local send_current_input
+
+local function ensure_chat()
+  if chat and vim.api.nvim_buf_is_valid(chat.buf) and vim.api.nvim_win_is_valid(chat.win) then
+    vim.api.nvim_set_current_win(chat.win)
+    return chat
+  end
+
+  local buf = vim.api.nvim_create_buf(false, true)
+  vim.bo[buf].buftype = "nofile"
+  vim.bo[buf].bufhidden = "wipe"
+  vim.bo[buf].swapfile = false
+  vim.bo[buf].filetype = "openrouter"
+  vim.bo[buf].modifiable = true
+
+  local width = math.max(60, math.floor(vim.o.columns * 0.7))
+  local height = math.max(14, math.floor(vim.o.lines * 0.6))
+  width = math.min(width, vim.o.columns - 4)
+  height = math.min(height, vim.o.lines - 4)
+
+  local row = math.floor((vim.o.lines - height) / 2 - 1)
+  if row < 0 then
+    row = 0
+  end
+  local col = math.floor((vim.o.columns - width) / 2)
+  if col < 0 then
+    col = 0
+  end
+
+  local win = vim.api.nvim_open_win(buf, true, {
+    relative = "editor",
+    row = row,
+    col = col,
+    width = width,
+    height = height,
+    style = "minimal",
+    border = "rounded",
+  })
+  vim.api.nvim_win_set_option(win, "wrap", true)
+
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "You: " })
+
+  chat = {
+    buf = buf,
+    win = win,
+    messages = {},
+    streaming = false,
+    assistant_start = nil,
+  }
+
+  vim.keymap.set("n", "q", function()
+    if vim.api.nvim_win_is_valid(win) then
+      vim.api.nvim_win_close(win, true)
+    end
+  end, { buffer = buf, silent = true, nowait = true })
+
+  vim.keymap.set("n", "<Esc>", function()
+    if vim.api.nvim_win_is_valid(win) then
+      vim.api.nvim_win_close(win, true)
+    end
+  end, { buffer = buf, silent = true, nowait = true })
+
+  vim.keymap.set("n", "<CR>", function()
+    send_current_input(chat)
+  end, { buffer = buf, silent = true, nowait = true })
+
+  vim.keymap.set("i", "<CR>", function()
+    send_current_input(chat)
+  end, { buffer = buf, silent = true, nowait = true })
+
+  return chat
+end
+
+local function render_response(state, response)
+  if not state or not vim.api.nvim_buf_is_valid(state.buf) then
+    return
+  end
+
+  local parts = vim.split(response or "", "\n", { plain = true })
+  if #parts == 0 then
+    parts = { "" }
+  end
+
+  local lines = vim.api.nvim_buf_get_lines(state.buf, 0, -1, false)
+  local new_lines = {}
+  for i = 1, (state.assistant_start or 1) - 1 do
+    new_lines[i] = lines[i]
+  end
+  new_lines[state.assistant_start] = "AI: " .. parts[1]
+  for i = 2, #parts do
+    new_lines[state.assistant_start + i - 1] = parts[i]
+  end
+
+  vim.api.nvim_buf_set_lines(state.buf, 0, -1, false, new_lines)
+  if vim.api.nvim_win_is_valid(state.win) then
+    vim.api.nvim_win_set_cursor(state.win, { #new_lines, 0 })
+  end
+end
+
+local function append_prompt(state)
+  if not state or not vim.api.nvim_buf_is_valid(state.buf) then
+    return
+  end
+  local lines = vim.api.nvim_buf_get_lines(state.buf, 0, -1, false)
+  table.insert(lines, "")
+  table.insert(lines, "You: ")
+  vim.api.nvim_buf_set_lines(state.buf, 0, -1, false, lines)
+  if vim.api.nvim_win_is_valid(state.win) then
+    vim.api.nvim_win_set_cursor(state.win, { #lines, 0 })
+    vim.cmd("startinsert")
+  end
+end
+
+send_current_input = function(state)
+  if not state or not vim.api.nvim_buf_is_valid(state.buf) then
+    return
+  end
+  if state.streaming then
+    vim.notify("Waiting for response...", vim.log.levels.INFO)
+    return
+  end
+
+  local line = vim.api.nvim_buf_get_lines(state.buf, -1, -1, false)[1] or ""
+  local prefix = "You: "
+  local text = line
+  if vim.startswith(line, prefix) then
+    text = line:sub(#prefix + 1)
+  end
+  if text:match("^%s*$") then
+    return
+  end
+
+  local lines = vim.api.nvim_buf_get_lines(state.buf, 0, -1, false)
+  lines[#lines] = "You: " .. text
+  table.insert(lines, "AI: ")
+  vim.api.nvim_buf_set_lines(state.buf, 0, -1, false, lines)
+  state.assistant_start = #lines
+  state.streaming = true
+
+  vim.notify("Q: " .. sanitize_message(text))
+  table.insert(state.messages, { role = "user", content = text })
+
+  local payload_messages = {}
+  if M.config.system_prompt and M.config.system_prompt ~= "" then
+    table.insert(payload_messages, { role = "system", content = M.config.system_prompt })
+  end
+  for _, msg in ipairs(state.messages) do
+    table.insert(payload_messages, msg)
+  end
+
+  request_stream(payload_messages, function(_, response)
+    render_response(state, response)
+  end, function(content, err)
+    state.streaming = false
+    if err then
+      render_response(state, "Error: " .. sanitize_message(err))
+      append_prompt(state)
+      return
+    end
+
+    table.insert(state.messages, { role = "assistant", content = content })
+    render_response(state, content)
+    append_prompt(state)
+  end)
+end
+
 function M.ask(message)
   local api_key = get_api_key()
   if not api_key then
@@ -251,29 +347,24 @@ function M.ask(message)
     return
   end
 
-  local safe_message = sanitize_message(message)
-
-  local messages = {}
-  if M.config.system_prompt and M.config.system_prompt ~= "" then
-    table.insert(messages, { role = "system", content = M.config.system_prompt })
+  local state = ensure_chat()
+  if not message or message == "" then
+    return
   end
-  table.insert(messages, { role = "user", content = message })
 
-  local window = open_stream_window(message)
-  request_stream(messages, function(_, response)
-    if window and window.render then
-      window.render(response)
-    end
-  end, function(content, err)
-    vim.notify("Q: " .. safe_message)
-    if err then
-      vim.notify(sanitize_message(err), vim.log.levels.ERROR)
-      if window and window.render then
-        window.render("Error: " .. sanitize_message(err))
-      end
-      return
-    end
-  end)
+  local lines = vim.api.nvim_buf_get_lines(state.buf, 0, -1, false)
+  lines[#lines] = "You: " .. message
+  vim.api.nvim_buf_set_lines(state.buf, 0, -1, false, lines)
+  send_current_input(state)
+end
+
+function M.open_chat()
+  ensure_chat()
+  local state = chat
+  if state and vim.api.nvim_win_is_valid(state.win) then
+    vim.api.nvim_win_set_cursor(state.win, { vim.api.nvim_buf_line_count(state.buf), 0 })
+    vim.cmd("startinsert")
+  end
 end
 
 function M.setup(opts)
