@@ -252,7 +252,6 @@ function M.ask(message)
   end
 
   local safe_message = sanitize_message(message)
-  local spinner = start_spinner("Waiting for response...")
 
   local messages = {}
   if M.config.system_prompt and M.config.system_prompt ~= "" then
