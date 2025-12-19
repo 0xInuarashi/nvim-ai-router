@@ -25,6 +25,38 @@ local function sanitize_message(text)
   return tostring(text):gsub("[%z\1-\31\127]", "")
 end
 
+local function start_spinner(label)
+  local frames = { "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" }
+  local idx = 1
+  local timer = vim.loop.new_timer()
+  local prev_cmdheight = vim.o.cmdheight
+
+  if prev_cmdheight == 0 then
+    vim.o.cmdheight = 1
+  end
+
+  local function render()
+    local text = frames[idx] .. " " .. label
+    vim.api.nvim_echo({ { text, "Comment" } }, false, {})
+    idx = (idx % #frames) + 1
+  end
+
+  render()
+  timer:start(120, 120, vim.schedule_wrap(render))
+  return { timer = timer, prev_cmdheight = prev_cmdheight }
+end
+
+local function stop_spinner(state)
+  if state and state.timer then
+    state.timer:stop()
+    state.timer:close()
+  end
+  if state and state.prev_cmdheight ~= nil then
+    vim.o.cmdheight = state.prev_cmdheight
+  end
+  vim.api.nvim_echo({ { "" } }, false, {})
+end
+
 local function validate_base_url(url)
   if type(url) ~= "string" or url == "" then
     return nil, "invalid base_url"
@@ -170,6 +202,7 @@ function M.ask(message)
   end
 
   vim.notify("Q: " .. sanitize_message(message))
+  local spinner = start_spinner("Waiting for response...")
 
   local messages = {}
   if M.config.system_prompt and M.config.system_prompt ~= "" then
@@ -177,6 +210,7 @@ function M.ask(message)
   end
   table.insert(messages, { role = "user", content = message })
   request(messages, function(content, err)
+    stop_spinner(spinner)
     if err then
       vim.notify(sanitize_message(err), vim.log.levels.ERROR)
       return
